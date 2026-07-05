@@ -1,0 +1,7 @@
+node_modules/
+.next/
+layers/
+.env.local
+bulk-upload-traits.js
+register-traits-onchain.js
+update-prices.js
