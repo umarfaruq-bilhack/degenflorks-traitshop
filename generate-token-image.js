@@ -116,10 +116,16 @@ async function generateForToken(tokenId) {
   const { data: urlData } = supabase.storage.from("traits").getPublicUrl(storagePath);
   console.log(`  ✅ Uploaded: ${urlData.publicUrl}`);
 
-  // Store the generated image URL so metadata route can use it
+  // Build attributes from equipped layers
+  const attributes = ordered
+    .filter(({ name }) => name !== "none")
+    .map(({ cat, name }) => ({ trait_type: cat, value: name }));
+
+  // Store image URL AND attributes as a snapshot
   await supabase.from("token_images").upsert({
     token_id: tokenId,
     image_url: urlData.publicUrl,
+    attributes,
     updated_at: new Date().toISOString(),
   });
 
