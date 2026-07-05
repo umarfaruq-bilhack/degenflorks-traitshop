@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/metadata/[tokenId]/image/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}

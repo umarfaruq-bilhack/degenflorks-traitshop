@@ -3,11 +3,21 @@ import sharp from "sharp";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
 export const dynamic = "force-dynamic";
 
-const SIZE = 1000;
+const SIZE = 800;
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
+
+async function fetchAndResize(url: string, isBase: boolean): Promise<Buffer> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const buf = Buffer.from(await res.arrayBuffer());
+  const pipeline = sharp(buf).resize(SIZE, SIZE, { fit: "fill" });
+  if (isBase) {
+    // Background may be RGB - flatten to ensure it's solid
+    return pipeline.flatten({ background: "#ffffff" }).png().toBuffer();
+  }
+  return pipeline.ensureAlpha().png().toBuffer();
+}
 
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
@@ -17,66 +27,47 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .select("category, traits(image_url)")
     .eq("token_id", tokenId);
 
-  // Build layer map sorted by RENDER_ORDER
+  if (!equipped || equipped.length === 0) {
+    const blank = Buffer.from(
+      `<svg width="${SIZE}" height="${SIZE}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#cccccc"/></svg>`
+    );
+    const img = await sharp(blank).png().toBuffer();
+    return new Response(new Uint8Array(img), { headers: { "Content-Type": "image/png" } });
+  }
+
   const layerMap = new Map<string, string>();
-  for (const e of (equipped || []) as any[]) {
+  for (const e of equipped as any[]) {
     if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
   }
 
-  const orderedUrls = RENDER_ORDER
-    .filter((cat) => layerMap.has(cat))
-    .map((cat) => ({ cat, url: layerMap.get(cat)! }));
+  const ordered = RENDER_ORDER.filter(cat => layerMap.has(cat));
 
-  if (orderedUrls.length === 0) {
-    // Return a plain dark square if no traits
-    const blank = await sharp({
-      create: { width: SIZE, height: SIZE, channels: 3, background: { r: 200, g: 200, b: 200 } }
-    }).jpeg().toBuffer();
-    return new Response(new Uint8Array(blank), {
-      headers: { "Content-Type": "image/jpeg", "Cache-Control": "no-store" },
-    });
+  if (ordered.length === 0) {
+    return new Response("No layers", { status: 404 });
   }
 
-  // Fetch all layers in parallel
-  const fetched = await Promise.all(
-    orderedUrls.map(async ({ cat, url }) => {
-      const res = await fetch(url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      // Convert everything to RGB PNG at target size
-      const resized = await sharp(buf)
-        .resize(SIZE, SIZE, { fit: "fill" })
-        .flatten({ background: { r: 255, g: 255, b: 255 } }) // flatten transparent to white
-        .png()
-        .toBuffer();
-      return { cat, buf: resized };
-    })
-  );
+  try {
+    // Process layers sequentially to avoid memory issues on Vercel
+    const [firstCat, ...restCats] = ordered;
+    const baseBuffer = await fetchAndResize(layerMap.get(firstCat)!, true);
+    
+    const overlayBuffers = await Promise.all(
+      restCats.map(cat => fetchAndResize(layerMap.get(cat)!, false))
+    );
 
-  // First layer is the base (background), rest are composited on top
-  const [base, ...rest] = fetched;
+    const result = await sharp(baseBuffer)
+      .composite(overlayBuffers.map(buf => ({ input: buf, blend: "over" as const })))
+      .jpeg({ quality: 85 })
+      .toBuffer();
 
-  // For non-background layers, we want to preserve transparency properly
-  // Re-fetch without flattening for overlay layers
-  const overlayBuffers = await Promise.all(
-    orderedUrls.slice(1).map(async ({ url }) => {
-      const res = await fetch(url);
-      const buf = Buffer.from(await res.arrayBuffer());
-      return sharp(buf)
-        .resize(SIZE, SIZE, { fit: "fill" })
-        .png()
-        .toBuffer();
-    })
-  );
-
-  const composite = await sharp(base.buf)
-    .composite(overlayBuffers.map((buf) => ({ input: buf, top: 0, left: 0 })))
-    .jpeg({ quality: 90 })
-    .toBuffer();
-
-  return new Response(new Uint8Array(composite), {
-    headers: {
-      "Content-Type": "image/jpeg",
-      "Cache-Control": "no-store, no-cache, must-revalidate",
-    },
-  });
+    return new Response(new Uint8Array(result), {
+      headers: {
+        "Content-Type": "image/jpeg",
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (err: any) {
+    console.error("Compositor error:", err.message);
+    return new Response("Compositor error: " + err.message, { status: 500 });
+  }
 }
