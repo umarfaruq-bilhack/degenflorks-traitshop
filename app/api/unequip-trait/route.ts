@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing tokenId or category" }, { status: 400 });
   }
 
+  // Delete the equipped trait for this category
   const { error } = await supabase
     .from("equipped_traits")
     .delete()
@@ -19,7 +20,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Auto-generate new composited image after unequip
+  // Store in unequipped_categories so page knows to hide the original trait
+  await supabase.from("unequipped_categories").upsert({
+    token_id: tokenId,
+    category,
+    updated_at: new Date().toISOString(),
+  });
+
+  // Auto-generate new image
   fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
