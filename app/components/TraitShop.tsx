@@ -63,7 +63,7 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
         chain,
         account: address,
       } as any);
-      if (publicClient) await publicClient.waitForTransactionReceipt({ hash });
+      if (publicClient) await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
       await equipTrait(tokenId, trait.category, trait.id);
       onEquipTrait(trait.category, trait.image_url, trait.name);
     } catch (e: any) {
