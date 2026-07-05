@@ -44,10 +44,10 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .png()
     .toBuffer();
 
-  return new Response(composite, {
+  return new Response(new Uint8Array(composite), {
     headers: {
       "Content-Type": "image/png",
-      "Cache-Control": "public, max-age=300", // short cache so refresh metadata works fast after a purchase
+      "Cache-Control": "public, max-age=300",
     },
   });
 }
