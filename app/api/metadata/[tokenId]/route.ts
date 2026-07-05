@@ -6,6 +6,9 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const ALCHEMY_BASE = `https://eth-mainnet.g.alchemy.com/nft/v3/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+const DEGENFLORKS_CONTRACT = process.env.NEXT_PUBLIC_DEGENFLORKS_CONTRACT;
+
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
 
@@ -14,7 +17,39 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .select("category, traits(name, rarity_tier, image_url)")
     .eq("token_id", tokenId);
 
-  const attributes = (equipped || [])
+  // If no equipped traits — fall back to original Alchemy metadata
+  if (!equipped || equipped.length === 0) {
+    try {
+      const alchemyUrl = `${ALCHEMY_BASE}/getNFTMetadata?contractAddress=${DEGENFLORKS_CONTRACT}&tokenId=${tokenId}&refreshCache=false`;
+      const alchemyRes = await fetch(alchemyUrl);
+      const alchemyData = await alchemyRes.json();
+
+      const originalImage = alchemyData.image?.cachedUrl || alchemyData.image?.originalUrl || "";
+      const originalAttributes = alchemyData.raw?.metadata?.attributes || [];
+
+      return NextResponse.json(
+        {
+          name: `Florks #${tokenId}`,
+          description: "Degen Florks — fully degen, no promises, all vibes.",
+          image: originalImage,
+          attributes: originalAttributes,
+        },
+        {
+          headers: {
+            "Cache-Control": "public, max-age=3600",
+          },
+        }
+      );
+    } catch {
+      return NextResponse.json(
+        { name: `Florks #${tokenId}`, description: "Degen Florks", image: "", attributes: [] },
+        { status: 200 }
+      );
+    }
+  }
+
+  // Has equipped traits — serve dynamic composited image
+  const attributes = equipped
     .filter((e: any) => e.traits?.name)
     .map((e: any) => ({
       trait_type: e.category,
@@ -34,7 +69,6 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Pragma": "no-cache",
       },
     }
   );
