@@ -6,15 +6,9 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 export const dynamic = "force-dynamic";
 
-const CANVAS_SIZE = 2048;
+const OUTPUT_SIZE = 1200; // output resolution
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
-/**
- * GET /api/metadata/[tokenId]/image
- * Composites the Flork purely from individual layer PNGs stored in Supabase.
- * No flat base image — background layer IS the base, everything else stacks on top.
- * This means purchased traits correctly replace original ones with no ghosting.
- */
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
 
@@ -24,16 +18,15 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .eq("token_id", tokenId);
 
   if (!equipped || equipped.length === 0) {
-    // No traits equipped — return a blank placeholder
     const blank = await sharp({
-      create: { width: CANVAS_SIZE, height: CANVAS_SIZE, channels: 4, background: { r: 13, g: 10, b: 27, alpha: 1 } }
+      create: { width: OUTPUT_SIZE, height: OUTPUT_SIZE, channels: 4, background: { r: 13, g: 10, b: 27, alpha: 1 } }
     }).png().toBuffer();
     return new Response(new Uint8Array(blank), {
       headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
     });
   }
 
-  // Sort layers by render order
+  // Build ordered layer map
   const layerMap = new Map<string, string>();
   for (const e of equipped as any[]) {
     if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
@@ -47,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     return new Response("No layers found", { status: 404 });
   }
 
-  // Fetch all layer images in parallel
+  // Fetch all layers in parallel
   const buffers = await Promise.all(
     orderedUrls.map(async (url) => {
       const res = await fetch(url);
@@ -55,14 +48,20 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     })
   );
 
-  // Use first layer (background) as the base, composite the rest on top
-  const [baseBuffer, ...layerBuffers] = buffers;
+  // Resize all layers to OUTPUT_SIZE first, then composite
+  const resizedBuffers = await Promise.all(
+    buffers.map((buf) =>
+      sharp(buf)
+        .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: "cover" })
+        .png()
+        .toBuffer()
+    )
+  );
+
+  const [baseBuffer, ...layerBuffers] = resizedBuffers;
 
   const composite = await sharp(baseBuffer)
-    .resize(CANVAS_SIZE, CANVAS_SIZE)
-    .composite(
-      layerBuffers.map((buf) => ({ input: buf, top: 0, left: 0 }))
-    )
+    .composite(layerBuffers.map((buf) => ({ input: buf, top: 0, left: 0 })))
     .png()
     .toBuffer();
 
