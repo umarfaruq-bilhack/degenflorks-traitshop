@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAccount, useWriteContract } from "wagmi";
+import { useAccount, useWriteContract, usePublicClient } from "wagmi";
 import { parseEther } from "viem";
 import { supabase, equipTrait, Trait } from "../lib/supabase";
 import { TRAITSHOP_CONTRACT, TRAITSHOP_ABI } from "../lib/web3Config";
@@ -23,7 +23,8 @@ type Props = {
 };
 
 export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props) {
-  const { address } = useAccount();
+  const { address, chain } = useAccount();
+  const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
 
   const [category, setCategory] = useState(CATEGORIES[0]);
@@ -49,17 +50,20 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
   }, [category]);
 
   async function handleBuy(trait: Trait) {
-    if (!address) return;
+    if (!address || !chain) return;
     setTxError("");
     setBuying(trait.id);
     try {
-      await writeContractAsync({
+      const hash = await writeContractAsync({
         address: TRAITSHOP_CONTRACT,
         abi: TRAITSHOP_ABI,
         functionName: "purchaseTrait",
         args: [BigInt(tokenId), BigInt(trait.on_chain_trait_id)],
         value: parseEther(trait.price_eth.toString()),
-      });
+        chain,
+        account: address,
+      } as any);
+      if (publicClient) await publicClient.waitForTransactionReceipt({ hash });
       await equipTrait(tokenId, trait.category, trait.id);
       onEquipTrait(trait.category, trait.image_url, trait.name);
     } catch (e: any) {
@@ -71,7 +75,6 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
 
   return (
     <div>
-      {/* Category tabs */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {CATEGORIES.map((c) => (
           <button
