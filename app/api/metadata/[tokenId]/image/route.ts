@@ -5,19 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 export const dynamic = "force-dynamic";
 
-const SIZE = 800;
+const OUTPUT_SIZE = 1000;
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
-
-async function fetchAndResize(url: string, isBase: boolean): Promise<Buffer> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  const buf = Buffer.from(await res.arrayBuffer());
-  const pipeline = sharp(buf).resize(SIZE, SIZE, { fit: "fill" });
-  if (isBase) {
-    // Background may be RGB - flatten to ensure it's solid
-    return pipeline.flatten({ background: "#ffffff" }).png().toBuffer();
-  }
-  return pipeline.ensureAlpha().png().toBuffer();
-}
 
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
@@ -28,11 +17,7 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .eq("token_id", tokenId);
 
   if (!equipped || equipped.length === 0) {
-    const blank = Buffer.from(
-      `<svg width="${SIZE}" height="${SIZE}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#cccccc"/></svg>`
-    );
-    const img = await sharp(blank).png().toBuffer();
-    return new Response(new Uint8Array(img), { headers: { "Content-Type": "image/png" } });
+    return new Response("No traits", { status: 404 });
   }
 
   const layerMap = new Map<string, string>();
@@ -41,33 +26,29 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
   }
 
   const ordered = RENDER_ORDER.filter(cat => layerMap.has(cat));
+  if (ordered.length === 0) return new Response("No layers", { status: 404 });
 
-  if (ordered.length === 0) {
-    return new Response("No layers", { status: 404 });
-  }
+  // Fetch all 1k layers in parallel — small files, fast
+  const buffers = await Promise.all(
+    ordered.map(async (cat) => {
+      const res = await fetch(layerMap.get(cat)!, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) throw new Error(`Failed to fetch ${cat}: ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    })
+  );
 
-  try {
-    // Process layers sequentially to avoid memory issues on Vercel
-    const [firstCat, ...restCats] = ordered;
-    const baseBuffer = await fetchAndResize(layerMap.get(firstCat)!, true);
-    
-    const overlayBuffers = await Promise.all(
-      restCats.map(cat => fetchAndResize(layerMap.get(cat)!, false))
-    );
+  const [baseBuffer, ...overlays] = buffers;
 
-    const result = await sharp(baseBuffer)
-      .composite(overlayBuffers.map(buf => ({ input: buf, blend: "over" as const })))
-      .jpeg({ quality: 85 })
-      .toBuffer();
+  const result = await sharp(baseBuffer)
+    .resize(OUTPUT_SIZE, OUTPUT_SIZE)
+    .composite(overlays.map(buf => ({ input: buf, top: 0, left: 0, blend: "over" as const })))
+    .jpeg({ quality: 90 })
+    .toBuffer();
 
-    return new Response(new Uint8Array(result), {
-      headers: {
-        "Content-Type": "image/jpeg",
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch (err: any) {
-    console.error("Compositor error:", err.message);
-    return new Response("Compositor error: " + err.message, { status: 500 });
-  }
+  return new Response(new Uint8Array(result), {
+    headers: {
+      "Content-Type": "image/jpeg",
+      "Cache-Control": "no-store",
+    },
+  });
 }

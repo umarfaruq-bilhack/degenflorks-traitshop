@@ -50,6 +50,10 @@ export async function equipTrait(tokenId: number, category: string, traitId: str
     .from("equipped_traits")
     .upsert({ token_id: tokenId, category, trait_id: traitId, updated_at: new Date().toISOString() });
   if (error) throw error;
-  // Trigger metadata regeneration (revalidate the dynamic image/metadata route)
-  await fetch(`/api/metadata/${tokenId}/regenerate`, { method: "POST" });
+  // Auto-generate and upload the composited image
+  fetch("/api/generate-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenId }),
+  }).catch(console.error);
 }
