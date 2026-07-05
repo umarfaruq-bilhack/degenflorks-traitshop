@@ -40,3 +40,5 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     return NextResponse.json({ name: `Florks #${tokenId}`, description: "Degen Florks", image: "", attributes: [] });
   }
 }
+
+// redeploy
