@@ -37,7 +37,7 @@ export default function FlorkCustomizePage() {
   const [loadingLayers, setLoadingLayers] = useState(true);
   const [previewTrait, setPreviewTrait] = useState<{ category: string; imageUrl: string } | null>(null);
 
-  // Load original traits from Alchemy metadata
+  // Load original traits from Alchemy metadata + seed equipped_traits on first visit
   useEffect(() => {
     if (!flork) return;
     setLoadingLayers(true);
@@ -49,6 +49,14 @@ export default function FlorkCustomizePage() {
     if (traitValues.length === 0) { setLoadingLayers(false); return; }
 
     const names = traitValues.map((t) => t.value);
+
+    // Seed original traits into equipped_traits if not already there
+    fetch("/api/seed-traits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokenId, attributes: flork.attributes }),
+    });
+
     supabase
       .from("traits")
       .select("name, category, image_url")
