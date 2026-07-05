@@ -32,11 +32,12 @@ export default function FlorkCustomizePage() {
   const flork = florks.find((f) => f.tokenId === tokenId);
 
   const [originalLayers, setOriginalLayers] = useState<Layer[]>([]);
+  const [equippedLayers, setEquippedLayers] = useState<Layer[]>([]);
   const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
-  const [purchasedLayers, setPurchasedLayers] = useState<Layer[]>([]);
   const [loadingLayers, setLoadingLayers] = useState(true);
   const [previewTrait, setPreviewTrait] = useState<{ category: string; imageUrl: string } | null>(null);
 
+  // Load original traits from Alchemy metadata
   useEffect(() => {
     if (!flork) return;
     setLoadingLayers(true);
@@ -62,9 +63,29 @@ export default function FlorkCustomizePage() {
           })
           .filter(Boolean) as Layer[];
         setOriginalLayers(layers);
-        setLoadingLayers(false);
       });
   }, [flork?.tokenId]);
+
+  // Load equipped traits from Supabase (persists across refreshes)
+  useEffect(() => {
+    if (!tokenId) return;
+    supabase
+      .from("equipped_traits")
+      .select("category, traits(name, image_url)")
+      .eq("token_id", tokenId)
+      .then(({ data }) => {
+        if (!data || data.length === 0) { setLoadingLayers(false); return; }
+        const layers: Layer[] = (data as any[])
+          .filter((e) => e.traits?.image_url)
+          .map((e) => ({
+            category: e.category,
+            imageUrl: e.traits.image_url,
+            traitValue: e.traits.name,
+          }));
+        setEquippedLayers(layers);
+        setLoadingLayers(false);
+      });
+  }, [tokenId]);
 
   function toggleCategory(category: string) {
     setHiddenCategories((prev) => {
@@ -76,7 +97,7 @@ export default function FlorkCustomizePage() {
   }
 
   function handleEquip(category: string, imageUrl: string, traitValue: string) {
-    setPurchasedLayers((prev) => [
+    setEquippedLayers((prev) => [
       ...prev.filter((l) => l.category !== category),
       { category, imageUrl, traitValue },
     ]);
@@ -87,9 +108,10 @@ export default function FlorkCustomizePage() {
     });
   }
 
+  // Merge: equipped overrides original for same category, then filter hidden
   function getActiveLayer(cat: string): Layer | null {
     if (hiddenCategories.has(cat)) return null;
-    return purchasedLayers.find((l) => l.category === cat)
+    return equippedLayers.find((l) => l.category === cat)
       || originalLayers.find((l) => l.category === cat)
       || null;
   }
@@ -127,7 +149,8 @@ export default function FlorkCustomizePage() {
                   {RENDER_ORDER.map((cat) => {
                     const layer = getActiveLayer(cat);
                     const isHidden = hiddenCategories.has(cat);
-                    const hasAny = !!originalLayers.find((l) => l.category === cat) || !!purchasedLayers.find((l) => l.category === cat);
+                    const hasAny = !!equippedLayers.find((l) => l.category === cat)
+                      || !!originalLayers.find((l) => l.category === cat);
                     return (
                       <div
                         key={cat}
@@ -160,7 +183,7 @@ export default function FlorkCustomizePage() {
               onEquipTrait={handleEquip}
             />
 
-            {/* Right: OpenSea preview */}
+            {/* Right: OpenSea preview — reflects toggle + hover in real time */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 13, color: "#a78bfa" }}>How it looks on OpenSea</div>
               <OpenSeaPreview
