@@ -31,6 +31,7 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
   const [traits, setTraits] = useState<Trait[]>([]);
   const [loadingTraits, setLoadingTraits] = useState(false);
   const [buying, setBuying] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [txError, setTxError] = useState("");
 
   useEffect(() => {
@@ -63,13 +64,26 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
         chain,
         account: address,
       } as any);
-      if (publicClient) await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
+
+      // Transaction sent — unblock the UI immediately
+      setBuying(null);
+      setConfirming(trait.id);
+
+      // Optimistically equip right away so user sees the change
       await equipTrait(tokenId, trait.category, trait.id);
       onEquipTrait(trait.category, trait.image_url, trait.name);
+
+      // Confirm in background — don't block the UI
+      if (publicClient) {
+        publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 })
+          .then(() => setConfirming(null))
+          .catch(() => setConfirming(null));
+      } else {
+        setConfirming(null);
+      }
     } catch (e: any) {
-      setTxError(e.message || "Transaction failed");
-    } finally {
       setBuying(null);
+      setTxError(e.message || "Transaction failed");
     }
   }
 
@@ -141,7 +155,7 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
                 cursor: buying ? "not-allowed" : "pointer",
               }}
             >
-              {buying === trait.id ? "Confirming…" : "Buy"}
+              {buying === trait.id ? "Check wallet…" : confirming === trait.id ? "⏳ On-chain…" : "Buy"}
             </button>
           </div>
         ))}
