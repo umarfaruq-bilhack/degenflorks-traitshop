@@ -6,7 +6,7 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 export const dynamic = "force-dynamic";
 
-const OUTPUT_SIZE = 1200; // output resolution
+const OUTPUT_SIZE = 1024; // output resolution
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
