@@ -103,9 +103,9 @@ export default function FlorkCustomizePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tokenId, category }),
       });
-      // Remove from equipped layers
+      // Remove from both equipped and original layers so canvas updates
       setEquippedLayers((prev) => prev.filter((l) => l.category !== category));
-      // Also remove from hidden (it's gone now)
+      setOriginalLayers((prev) => prev.filter((l) => l.category !== category));
       setHiddenCategories((prev) => {
         const next = new Set(prev);
         next.delete(category);
@@ -197,8 +197,8 @@ export default function FlorkCustomizePage() {
                           {isHidden ? `○ ${cat}` : layer ? `✓ ${layer.traitValue}` : `— ${cat}`}
                         </div>
 
-                        {/* Unequip button — only show for purchased traits */}
-                        {purchased && !isHidden && (
+                        {/* Unequip button — show for any active trait */}
+                        {layer && !isHidden && (
                           <button
                             onClick={() => handleUnequip(cat)}
                             disabled={isUnequipping}
@@ -227,7 +227,7 @@ export default function FlorkCustomizePage() {
                 </div>
 
                 <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8 }}>
-                  ✕ removes a purchased trait from your NFT · after unequipping, run{" "}
+                  ✕ removes any trait from your NFT display · after unequipping, run{" "}
                   <code style={{ color: "#a78bfa" }}>generate-token-image.js {tokenId}</code>{" "}
                   and refresh metadata on OpenSea
                 </p>
