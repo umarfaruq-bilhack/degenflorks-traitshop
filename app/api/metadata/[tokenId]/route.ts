@@ -10,12 +10,13 @@ const CONTRACT = process.env.NEXT_PUBLIC_DEGENFLORKS_CONTRACT;
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
 
-  // Check token_images first — this is the source of truth for customized tokens
-  const { data: tokenImage } = await supabase
+  const { data: rows } = await supabase
     .from("token_images")
     .select("image_url, attributes")
     .eq("token_id", tokenId)
-    .single();
+    .limit(1);
+
+  const tokenImage = rows?.[0];
 
   if (tokenImage?.image_url) {
     return NextResponse.json({
@@ -26,7 +27,6 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  // No customization — serve original from Alchemy
   try {
     const res = await fetch(`${ALCHEMY_BASE}/getNFTMetadata?contractAddress=${CONTRACT}&tokenId=${tokenId}`);
     const data = await res.json();
@@ -40,5 +40,3 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     return NextResponse.json({ name: `Florks #${tokenId}`, description: "Degen Florks", image: "", attributes: [] });
   }
 }
-
-// redeploy    
