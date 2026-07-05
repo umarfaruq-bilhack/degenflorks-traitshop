@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import TraitPreviewCanvas from "../../components/TraitPreviewCanvas";
 import TraitShop from "../../components/TraitShop";
+import OpenSeaPreview from "../../components/OpenSeaPreview";
 import { useOwnedFlorks } from "../../lib/useOwnedFlorks";
 import { supabase } from "../../lib/supabase";
 
@@ -16,7 +17,6 @@ const CATEGORY_MAP: Record<string, string> = {
   florks_head: "head",
 };
 
-// Render order: first drawn = furthest back
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
 type Layer = {
@@ -31,11 +31,8 @@ export default function FlorkCustomizePage() {
   const { florks } = useOwnedFlorks();
   const flork = florks.find((f) => f.tokenId === tokenId);
 
-  // originalLayers = what the token actually has (never changes after load)
   const [originalLayers, setOriginalLayers] = useState<Layer[]>([]);
-  // hiddenCategories = set of categories the user toggled off
   const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
-  // purchasedLayers = traits bought/equipped this session (overrides original for that category)
   const [purchasedLayers, setPurchasedLayers] = useState<Layer[]>([]);
   const [loadingLayers, setLoadingLayers] = useState(true);
   const [previewTrait, setPreviewTrait] = useState<{ category: string; imageUrl: string } | null>(null);
@@ -69,23 +66,20 @@ export default function FlorkCustomizePage() {
       });
   }, [flork?.tokenId]);
 
-  // Toggle a category on/off — toggling back ON restores it
   function toggleCategory(category: string) {
     setHiddenCategories((prev) => {
       const next = new Set(prev);
-      if (next.has(category)) next.delete(category); // restore
-      else next.add(category); // hide
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
       return next;
     });
   }
 
-  // Called when user buys/equips a new trait from the shop
   function handleEquip(category: string, imageUrl: string, traitValue: string) {
     setPurchasedLayers((prev) => [
       ...prev.filter((l) => l.category !== category),
       { category, imageUrl, traitValue },
     ]);
-    // Also unhide this category if it was hidden
     setHiddenCategories((prev) => {
       const next = new Set(prev);
       next.delete(category);
@@ -93,17 +87,6 @@ export default function FlorkCustomizePage() {
     });
   }
 
-  // Merge: purchased overrides original for same category, then filter hidden
-  const mergedLayers: Layer[] = RENDER_ORDER
-    .map((cat) => {
-      if (hiddenCategories.has(cat)) return null;
-      const purchased = purchasedLayers.find((l) => l.category === cat);
-      if (purchased) return purchased;
-      return originalLayers.find((l) => l.category === cat) || null;
-    })
-    .filter(Boolean) as Layer[];
-
-  // What's "active" per category for showing in the pills
   function getActiveLayer(cat: string): Layer | null {
     if (hiddenCategories.has(cat)) return null;
     return purchasedLayers.find((l) => l.category === cat)
@@ -111,28 +94,32 @@ export default function FlorkCustomizePage() {
       || null;
   }
 
+  const mergedLayers: Layer[] = RENDER_ORDER
+    .map((cat) => getActiveLayer(cat))
+    .filter(Boolean) as Layer[];
+
   return (
     <main style={{ background: "radial-gradient(circle at 50% 0%, #1a1640, #05050a)", minHeight: "100vh", padding: "0 0 80px" }}>
-      <div style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 24px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 24px" }}>
         <Link href="/" style={{ fontSize: 13, color: "#a78bfa" }}>← Back to your Florks</Link>
         <h1 style={{ fontSize: 20, fontWeight: 500, margin: "16px 0 24px" }}>Customize Florks #{tokenId}</h1>
 
         {!flork ? (
           <p style={{ color: "#b0aed0" }}>This token wasn't found in your connected wallet.</p>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr 280px", gap: 24 }}>
+
             {/* Left: canvas + trait toggles */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <TraitPreviewCanvas
                 baseImageUrl=""
                 equippedLayers={mergedLayers}
                 previewTrait={previewTrait}
-                size={380}
+                size={320}
               />
               <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", margin: 0 }}>
-                Hover a trait to preview · Click a pill to toggle it on/off
+                Hover a trait to preview · Click a pill to toggle
               </p>
-
               <div>
                 <div style={{ fontSize: 13, color: "#a78bfa", marginBottom: 8 }}>Current traits</div>
                 {loadingLayers && <p style={{ fontSize: 13, color: "#b0aed0" }}>Loading…</p>}
@@ -156,7 +143,6 @@ export default function FlorkCustomizePage() {
                           userSelect: "none",
                           textDecoration: isHidden ? "line-through" : "none",
                         }}
-                        title={isHidden ? `Click to restore ${cat}` : layer ? `Click to remove ${layer.traitValue}` : `No ${cat}`}
                       >
                         {isHidden ? `✗ ${cat}` : layer ? `✓ ${layer.traitValue}` : `— ${cat}`}
                       </div>
@@ -166,13 +152,27 @@ export default function FlorkCustomizePage() {
               </div>
             </div>
 
-            {/* Right: trait shop */}
+            {/* Middle: trait shop */}
             <TraitShop
               tokenId={tokenId}
               baseImageUrl={flork.imageUrl}
               onHoverTrait={setPreviewTrait}
               onEquipTrait={handleEquip}
             />
+
+            {/* Right: OpenSea preview */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 13, color: "#a78bfa" }}>How it looks on OpenSea</div>
+              <OpenSeaPreview
+                tokenId={tokenId}
+                layers={mergedLayers}
+                previewTrait={previewTrait}
+              />
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", margin: 0 }}>
+                After purchasing, hit "Refresh metadata" on OpenSea to update your NFT.
+              </p>
+            </div>
+
           </div>
         )}
       </div>
