@@ -10,46 +10,33 @@ const CONTRACT = process.env.NEXT_PUBLIC_DEGENFLORKS_CONTRACT;
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
 
-  const { data: equipped } = await supabase
-    .from("equipped_traits")
-    .select("category, traits(name)")
-    .eq("token_id", tokenId);
-
-  // No equipped traits = serve original from Alchemy
-  if (!equipped || equipped.length === 0) {
-    try {
-      const res = await fetch(`${ALCHEMY_BASE}/getNFTMetadata?contractAddress=${CONTRACT}&tokenId=${tokenId}`);
-      const data = await res.json();
-      return NextResponse.json({
-        name: `Florks #${tokenId}`,
-        description: "Degen Florks — fully degen, no promises, all vibes.",
-        image: data.image?.cachedUrl || data.image?.originalUrl || "",
-        attributes: data.raw?.metadata?.attributes || [],
-      }, { headers: { "Cache-Control": "public, max-age=3600" } });
-    } catch {
-      return NextResponse.json({ name: `Florks #${tokenId}`, description: "Degen Florks", image: "", attributes: [] });
-    }
-  }
-
-  const attributes = equipped.filter((e: any) => e.traits?.name).map((e: any) => ({
-    trait_type: e.category,
-    value: e.traits.name,
-  }));
-
-  // Check for pre-generated image first
+  // Check token_images first — this is the source of truth for customized tokens
   const { data: tokenImage } = await supabase
     .from("token_images")
-    .select("image_url")
+    .select("image_url, attributes")
     .eq("token_id", tokenId)
     .single();
 
-  const imageUrl = tokenImage?.image_url ||
-    `${process.env.NEXT_PUBLIC_SITE_URL}/api/metadata/${tokenId}/image?v=${Date.now()}`;
+  if (tokenImage?.image_url) {
+    return NextResponse.json({
+      name: `Florks #${tokenId}`,
+      description: "Degen Florks — fully degen, no promises, all vibes.",
+      image: tokenImage.image_url,
+      attributes: tokenImage.attributes || [],
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
 
-  return NextResponse.json({
-    name: `Florks #${tokenId}`,
-    description: "Degen Florks — fully degen, no promises, all vibes.",
-    image: imageUrl,
-    attributes,
-  }, { headers: { "Cache-Control": "no-store" } });
+  // No customization — serve original from Alchemy
+  try {
+    const res = await fetch(`${ALCHEMY_BASE}/getNFTMetadata?contractAddress=${CONTRACT}&tokenId=${tokenId}`);
+    const data = await res.json();
+    return NextResponse.json({
+      name: `Florks #${tokenId}`,
+      description: "Degen Florks — fully degen, no promises, all vibes.",
+      image: data.image?.cachedUrl || data.image?.originalUrl || "",
+      attributes: data.raw?.metadata?.attributes || [],
+    }, { headers: { "Cache-Control": "public, max-age=3600" } });
+  } catch {
+    return NextResponse.json({ name: `Florks #${tokenId}`, description: "Degen Florks", image: "", attributes: [] });
+  }
 }

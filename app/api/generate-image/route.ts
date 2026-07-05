@@ -8,39 +8,38 @@ export const dynamic = "force-dynamic";
 const OUTPUT_SIZE = 1000;
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
-/**
- * POST /api/generate-image
- * Body: { tokenId }
- * Composites the token's equipped traits into a final image,
- * uploads it to Supabase Storage, and updates token_images table.
- * Called automatically after every equip/unequip action.
- */
 export async function POST(req: NextRequest) {
   const { tokenId } = await req.json();
   if (!tokenId) return NextResponse.json({ error: "Missing tokenId" }, { status: 400 });
 
   const { data: equipped } = await supabase
     .from("equipped_traits")
-    .select("category, traits(image_url)")
+    .select("category, traits(name, image_url)")
     .eq("token_id", tokenId);
 
   if (!equipped || equipped.length === 0) {
-    // No traits — delete any stored generated image
     await supabase.from("token_images").delete().eq("token_id", tokenId);
     return NextResponse.json({ success: true, message: "No traits, cleared stored image" });
   }
 
   const layerMap = new Map<string, string>();
+  const nameMap = new Map<string, string>();
+
   for (const e of equipped as any[]) {
     if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
+    if (e.traits?.name) nameMap.set(e.category, e.traits.name);
   }
 
   const ordered = RENDER_ORDER.filter(cat => layerMap.has(cat));
-  if (ordered.length === 0) {
-    return NextResponse.json({ error: "No layers found" }, { status: 400 });
-  }
+  if (ordered.length === 0) return NextResponse.json({ error: "No layers" }, { status: 400 });
 
-  // Fetch 1k pre-resized layers in parallel
+  // Build attributes from current equipped state
+  const attributes = ordered.map(cat => ({
+    trait_type: cat,
+    value: nameMap.get(cat),
+  }));
+
+  // Fetch 1k layers in parallel
   const buffers = await Promise.all(
     ordered.map(async (cat) => {
       const res = await fetch(layerMap.get(cat)!, { signal: AbortSignal.timeout(10000) });
@@ -57,23 +56,22 @@ export async function POST(req: NextRequest) {
     .jpeg({ quality: 90 })
     .toBuffer();
 
-  // Upload to Supabase Storage
   const storagePath = `generated/${tokenId}.jpg`;
   const { error: uploadError } = await supabase.storage
     .from("traits")
     .upload(storagePath, composite, { contentType: "image/jpeg", upsert: true });
 
-  if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 500 });
-  }
+  if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 });
 
   const { data: urlData } = supabase.storage.from("traits").getPublicUrl(storagePath);
 
+  // Store BOTH image URL and attributes so metadata route reads fresh data
   await supabase.from("token_images").upsert({
     token_id: tokenId,
     image_url: urlData.publicUrl,
+    attributes,
     updated_at: new Date().toISOString(),
   });
 
-  return NextResponse.json({ success: true, imageUrl: urlData.publicUrl });
+  return NextResponse.json({ success: true, imageUrl: urlData.publicUrl, attributes });
 }
