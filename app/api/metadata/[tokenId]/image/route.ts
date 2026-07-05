@@ -4,50 +4,72 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-const CANVAS_SIZE = 1200; // match your original Florks generation resolution
+export const dynamic = "force-dynamic";
+
+const CANVAS_SIZE = 2048;
+const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
 /**
  * GET /api/metadata/[tokenId]/image
- * Composites the base Flork image with all currently equipped trait layers,
- * in category render order (e.g. clothes -> accessory -> hat), using the
- * same Sharp layering approach used for OldPunks/GLITCH CITY generation.
+ * Composites the Flork purely from individual layer PNGs stored in Supabase.
+ * No flat base image — background layer IS the base, everything else stacks on top.
+ * This means purchased traits correctly replace original ones with no ghosting.
  */
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
   const tokenId = Number(params.tokenId);
-
-  const baseImageUrl = `${process.env.NEXT_PUBLIC_BASE_IMAGES_CDN}/${tokenId}.png`;
 
   const { data: equipped } = await supabase
     .from("equipped_traits")
     .select("category, traits(image_url)")
     .eq("token_id", tokenId);
 
-  // Render order matters for visual layering — adjust to your art's z-index needs
-  const RENDER_ORDER = ["clothes", "accessory", "hat"];
-  const ordered = (equipped || [])
-    .filter((e: any) => e.traits?.image_url)
-    .sort((a: any, b: any) => RENDER_ORDER.indexOf(a.category) - RENDER_ORDER.indexOf(b.category));
+  if (!equipped || equipped.length === 0) {
+    // No traits equipped — return a blank placeholder
+    const blank = await sharp({
+      create: { width: CANVAS_SIZE, height: CANVAS_SIZE, channels: 4, background: { r: 13, g: 10, b: 27, alpha: 1 } }
+    }).png().toBuffer();
+    return new Response(new Uint8Array(blank), {
+      headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
+    });
+  }
 
-  const baseRes = await fetch(baseImageUrl);
-  const baseBuffer = Buffer.from(await baseRes.arrayBuffer());
+  // Sort layers by render order
+  const layerMap = new Map<string, string>();
+  for (const e of equipped as any[]) {
+    if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
+  }
 
-  const layerBuffers = await Promise.all(
-    ordered.map(async (e: any) => {
-      const res = await fetch(e.traits.image_url);
+  const orderedUrls = RENDER_ORDER
+    .filter((cat) => layerMap.has(cat))
+    .map((cat) => layerMap.get(cat)!);
+
+  if (orderedUrls.length === 0) {
+    return new Response("No layers found", { status: 404 });
+  }
+
+  // Fetch all layer images in parallel
+  const buffers = await Promise.all(
+    orderedUrls.map(async (url) => {
+      const res = await fetch(url);
       return Buffer.from(await res.arrayBuffer());
     })
   );
 
+  // Use first layer (background) as the base, composite the rest on top
+  const [baseBuffer, ...layerBuffers] = buffers;
+
   const composite = await sharp(baseBuffer)
     .resize(CANVAS_SIZE, CANVAS_SIZE)
-    .composite(layerBuffers.map((buf) => ({ input: buf, top: 0, left: 0 })))
+    .composite(
+      layerBuffers.map((buf) => ({ input: buf, top: 0, left: 0 }))
+    )
     .png()
     .toBuffer();
 
   return new Response(new Uint8Array(composite), {
     headers: {
       "Content-Type": "image/png",
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
     },
   });
 }
