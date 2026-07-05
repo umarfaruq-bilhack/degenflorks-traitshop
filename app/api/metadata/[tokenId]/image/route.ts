@@ -6,7 +6,7 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 export const dynamic = "force-dynamic";
 
-const OUTPUT_SIZE = 1024; // output resolution
+const SIZE = 1000;
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
 export async function GET(_req: NextRequest, { params }: { params: { tokenId: string } }) {
@@ -17,57 +17,65 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
     .select("category, traits(image_url)")
     .eq("token_id", tokenId);
 
-  if (!equipped || equipped.length === 0) {
-    const blank = await sharp({
-      create: { width: OUTPUT_SIZE, height: OUTPUT_SIZE, channels: 4, background: { r: 13, g: 10, b: 27, alpha: 1 } }
-    }).png().toBuffer();
-    return new Response(new Uint8Array(blank), {
-      headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
-    });
-  }
-
-  // Build ordered layer map
+  // Build layer map sorted by RENDER_ORDER
   const layerMap = new Map<string, string>();
-  for (const e of equipped as any[]) {
+  for (const e of (equipped || []) as any[]) {
     if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
   }
 
   const orderedUrls = RENDER_ORDER
     .filter((cat) => layerMap.has(cat))
-    .map((cat) => layerMap.get(cat)!);
+    .map((cat) => ({ cat, url: layerMap.get(cat)! }));
 
   if (orderedUrls.length === 0) {
-    return new Response("No layers found", { status: 404 });
+    // Return a plain dark square if no traits
+    const blank = await sharp({
+      create: { width: SIZE, height: SIZE, channels: 3, background: { r: 200, g: 200, b: 200 } }
+    }).jpeg().toBuffer();
+    return new Response(new Uint8Array(blank), {
+      headers: { "Content-Type": "image/jpeg", "Cache-Control": "no-store" },
+    });
   }
 
   // Fetch all layers in parallel
-  const buffers = await Promise.all(
-    orderedUrls.map(async (url) => {
+  const fetched = await Promise.all(
+    orderedUrls.map(async ({ cat, url }) => {
       const res = await fetch(url);
-      return Buffer.from(await res.arrayBuffer());
+      const buf = Buffer.from(await res.arrayBuffer());
+      // Convert everything to RGB PNG at target size
+      const resized = await sharp(buf)
+        .resize(SIZE, SIZE, { fit: "fill" })
+        .flatten({ background: { r: 255, g: 255, b: 255 } }) // flatten transparent to white
+        .png()
+        .toBuffer();
+      return { cat, buf: resized };
     })
   );
 
-  // Resize all layers to OUTPUT_SIZE first, then composite
-  const resizedBuffers = await Promise.all(
-    buffers.map((buf) =>
-      sharp(buf)
-        .resize(OUTPUT_SIZE, OUTPUT_SIZE, { fit: "cover" })
+  // First layer is the base (background), rest are composited on top
+  const [base, ...rest] = fetched;
+
+  // For non-background layers, we want to preserve transparency properly
+  // Re-fetch without flattening for overlay layers
+  const overlayBuffers = await Promise.all(
+    orderedUrls.slice(1).map(async ({ url }) => {
+      const res = await fetch(url);
+      const buf = Buffer.from(await res.arrayBuffer());
+      return sharp(buf)
+        .resize(SIZE, SIZE, { fit: "fill" })
         .png()
-        .toBuffer()
-    )
+        .toBuffer();
+    })
   );
 
-  const [baseBuffer, ...layerBuffers] = resizedBuffers;
-
-  const composite = await sharp(baseBuffer)
-    .composite(layerBuffers.map((buf) => ({ input: buf, top: 0, left: 0 })))
-    .png()
+  const composite = await sharp(base.buf)
+    .composite(overlayBuffers.map((buf) => ({ input: buf, top: 0, left: 0 })))
+    .jpeg({ quality: 90 })
     .toBuffer();
 
   return new Response(new Uint8Array(composite), {
     headers: {
-      "Content-Type": "image/png",
+      "Content-Type": "image/jpeg",
       "Cache-Control": "no-store, no-cache, must-revalidate",
     },
   });

@@ -21,7 +21,6 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
       value: e.traits.name,
     }));
 
-  // Use timestamp as version so OpenSea always gets a fresh image URL
   const version = Date.now();
   const imageUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/api/metadata/${tokenId}/image?v=${version}`;
 
