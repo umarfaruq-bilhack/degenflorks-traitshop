@@ -50,6 +50,14 @@ export async function equipTrait(tokenId: number, category: string, traitId: str
     .from("equipped_traits")
     .upsert({ token_id: tokenId, category, trait_id: traitId, updated_at: new Date().toISOString() });
   if (error) throw error;
+
+  // Remove from unequipped_categories if it was previously unequipped
+  await supabase
+    .from("unequipped_categories")
+    .delete()
+    .eq("token_id", tokenId)
+    .eq("category", category);
+
   // Auto-generate and upload the composited image
   fetch("/api/generate-image", {
     method: "POST",
