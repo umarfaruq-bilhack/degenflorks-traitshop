@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   });
 
   // Auto-generate new image
-  fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/generate-image`, {
+  fetch(`${process.env.SITE_URL}/api/generate-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tokenId }),
