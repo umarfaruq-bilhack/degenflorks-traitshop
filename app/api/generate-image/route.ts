@@ -8,41 +8,88 @@ export const dynamic = "force-dynamic";
 const OUTPUT_SIZE = 1000;
 const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
 
+const ALCHEMY_BASE = `https://eth-mainnet.g.alchemy.com/nft/v3/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+const CONTRACT = process.env.NEXT_PUBLIC_DEGENFLORKS_CONTRACT;
+
+const CATEGORY_MAP: Record<string, string> = {
+  florks_accessories: "accessory",
+  florks_background: "background",
+  florks_cloth: "clothes",
+  florks_hand: "hand",
+  florks_head: "head",
+};
+
 export async function POST(req: NextRequest) {
   const { tokenId } = await req.json();
   if (!tokenId) return NextResponse.json({ error: "Missing tokenId" }, { status: 400 });
 
+  // Get equipped traits
   const { data: equipped } = await supabase
     .from("equipped_traits")
     .select("category, traits(name, image_url)")
     .eq("token_id", tokenId);
 
-  if (!equipped || equipped.length === 0) {
+  // Get explicitly unequipped categories
+  const { data: unequipped } = await supabase
+    .from("unequipped_categories")
+    .select("category")
+    .eq("token_id", tokenId);
+
+  const unequippedSet = new Set((unequipped || []).map((r: any) => r.category));
+  const equippedMap = new Map<string, { name: string; image_url: string }>();
+
+  for (const e of (equipped || []) as any[]) {
+    if (e.traits?.image_url) equippedMap.set(e.category, e.traits);
+  }
+
+  // For categories not in equipped AND not explicitly unequipped,
+  // fetch original traits from Alchemy
+  const equippedCategories = new Set(equippedMap.keys());
+  const missingCategories = RENDER_ORDER.filter(
+    cat => !equippedCategories.has(cat) && !unequippedSet.has(cat)
+  );
+
+  if (missingCategories.length > 0) {
+    try {
+      const res = await fetch(`${ALCHEMY_BASE}/getNFTMetadata?contractAddress=${CONTRACT}&tokenId=${tokenId}`);
+      const data = await res.json();
+      const originalAttrs: { trait_type: string; value: string }[] = data.raw?.metadata?.attributes || [];
+
+      const missingNames = originalAttrs
+        .map((a) => ({ category: CATEGORY_MAP[a.trait_type], value: a.value }))
+        .filter((t) => t.category && missingCategories.includes(t.category));
+
+      if (missingNames.length > 0) {
+        const { data: traitRows } = await supabase
+          .from("traits")
+          .select("name, category, image_url")
+          .in("name", missingNames.map((t) => t.value));
+
+        for (const t of missingNames) {
+          const row = (traitRows || []).find((r: any) => r.name === t.value && r.category === t.category);
+          if (row) equippedMap.set(t.category, { name: row.name, image_url: row.image_url });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch Alchemy traits:", e);
+    }
+  }
+
+  if (equippedMap.size === 0) {
     await supabase.from("token_images").delete().eq("token_id", tokenId);
-    return NextResponse.json({ success: true, message: "No traits, cleared stored image" });
+    return NextResponse.json({ success: true, message: "No traits" });
   }
 
-  const layerMap = new Map<string, string>();
-  const nameMap = new Map<string, string>();
-
-  for (const e of equipped as any[]) {
-    if (e.traits?.image_url) layerMap.set(e.category, e.traits.image_url);
-    if (e.traits?.name) nameMap.set(e.category, e.traits.name);
-  }
-
-  const ordered = RENDER_ORDER.filter(cat => layerMap.has(cat));
-  if (ordered.length === 0) return NextResponse.json({ error: "No layers" }, { status: 400 });
-
-  // Build attributes from current equipped state
+  const ordered = RENDER_ORDER.filter(cat => equippedMap.has(cat));
   const attributes = ordered.map(cat => ({
     trait_type: cat,
-    value: nameMap.get(cat),
+    value: equippedMap.get(cat)!.name,
   }));
 
-  // Fetch 1k layers in parallel
+  // Fetch layer images
   const buffers = await Promise.all(
     ordered.map(async (cat) => {
-      const res = await fetch(layerMap.get(cat)!, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(equippedMap.get(cat)!.image_url, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) throw new Error(`Failed to fetch ${cat}`);
       return Buffer.from(await res.arrayBuffer());
     })
@@ -65,7 +112,6 @@ export async function POST(req: NextRequest) {
 
   const { data: urlData } = supabase.storage.from("traits").getPublicUrl(storagePath);
 
-  // Store BOTH image URL and attributes so metadata route reads fresh data
   await supabase.from("token_images").upsert({
     token_id: tokenId,
     image_url: urlData.publicUrl,
