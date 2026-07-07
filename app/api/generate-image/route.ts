@@ -115,11 +115,16 @@ export async function POST(req: NextRequest) {
   });
 
   // Force OpenSea to re-index immediately after image is ready
-  fetch(`${process.env.SITE_URL}/api/refresh-opensea`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tokenId }),
-  }).catch(console.error);
+  try {
+    await fetch(`${process.env.SITE_URL}/api/refresh-opensea`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokenId }),
+    });
+    console.log(`[generate-image] OpenSea refresh queued for token ${tokenId}`);
+  } catch (e: any) {
+    console.error(`[generate-image] OpenSea refresh failed: ${e.message}`);
+  }
 
   return NextResponse.json({ success: true, imageUrl: urlData.publicUrl, attributes });
 }
