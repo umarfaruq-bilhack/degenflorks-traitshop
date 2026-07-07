@@ -12,17 +12,22 @@ export async function GET(_req: NextRequest, { params }: { params: { tokenId: st
 
   const { data: rows } = await supabase
     .from("token_images")
-    .select("image_url, attributes")
+    .select("image_url, attributes, updated_at")
     .eq("token_id", tokenId)
     .limit(1);
 
   const tokenImage = rows?.[0];
 
   if (tokenImage?.image_url) {
+    // Versioned URL = OpenSea sees a NEW URL every time traits change
+    // → fetches fresh image instantly, no cache delay
+    const version = new Date(tokenImage.updated_at || Date.now()).getTime();
+    const imageUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/api/metadata/${tokenId}/image?v=${version}`;
+
     return NextResponse.json({
       name: `Florks #${tokenId}`,
       description: "Degen Florks — fully degen, no promises, all vibes.",
-      image: tokenImage.image_url,
+      image: imageUrl,
       attributes: tokenImage.attributes || [],
     }, { headers: { "Cache-Control": "no-store" } });
   }
