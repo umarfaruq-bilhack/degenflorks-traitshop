@@ -23,13 +23,11 @@ export async function POST(req: NextRequest) {
   const { tokenId } = await req.json();
   if (!tokenId) return NextResponse.json({ error: "Missing tokenId" }, { status: 400 });
 
-  // Get equipped traits
   const { data: equipped } = await supabase
     .from("equipped_traits")
     .select("category, traits(name, image_url)")
     .eq("token_id", tokenId);
 
-  // Get explicitly unequipped categories
   const { data: unequipped } = await supabase
     .from("unequipped_categories")
     .select("category")
@@ -42,8 +40,6 @@ export async function POST(req: NextRequest) {
     if (e.traits?.image_url) equippedMap.set(e.category, e.traits);
   }
 
-  // For categories not in equipped AND not explicitly unequipped,
-  // fetch original traits from Alchemy
   const equippedCategories = new Set(equippedMap.keys());
   const missingCategories = RENDER_ORDER.filter(
     cat => !equippedCategories.has(cat) && !unequippedSet.has(cat)
@@ -86,7 +82,6 @@ export async function POST(req: NextRequest) {
     value: equippedMap.get(cat)!.name,
   }));
 
-  // Fetch layer images
   const buffers = await Promise.all(
     ordered.map(async (cat) => {
       const res = await fetch(equippedMap.get(cat)!.image_url, { signal: AbortSignal.timeout(10000) });
@@ -118,6 +113,13 @@ export async function POST(req: NextRequest) {
     attributes,
     updated_at: new Date().toISOString(),
   });
+
+  // Force OpenSea to re-index immediately after image is ready
+  fetch(`${process.env.SITE_URL}/api/refresh-opensea`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenId }),
+  }).catch(console.error);
 
   return NextResponse.json({ success: true, imageUrl: urlData.publicUrl, attributes });
 }
