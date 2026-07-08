@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
+const RENDER_ORDER = ["background", "head", "clothes", "accessory", "hand"];
 
 type Layer = { category: string; imageUrl: string };
 

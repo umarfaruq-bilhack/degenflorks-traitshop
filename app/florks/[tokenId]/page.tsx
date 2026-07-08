@@ -17,7 +17,7 @@ const CATEGORY_MAP: Record<string, string> = {
   florks_head: "head",
 };
 
-const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
+const RENDER_ORDER = ["background", "head", "clothes", "accessory", "hand"];
 
 type Layer = {
   category: string;

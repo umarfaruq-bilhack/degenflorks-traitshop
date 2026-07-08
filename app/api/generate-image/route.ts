@@ -6,7 +6,7 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 export const dynamic = "force-dynamic";
 
 const OUTPUT_SIZE = 1000;
-const RENDER_ORDER = ["background", "head", "clothes", "hand", "accessory"];
+const RENDER_ORDER = ["background", "head", "clothes", "accessory", "hand"];
 
 const ALCHEMY_BASE = `https://eth-mainnet.g.alchemy.com/nft/v3/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
 const CONTRACT = process.env.NEXT_PUBLIC_DEGENFLORKS_CONTRACT;

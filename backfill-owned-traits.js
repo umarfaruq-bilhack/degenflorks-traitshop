@@ -1,44 +1,45 @@
 /**
  * backfill-owned-traits.js
- * 
- * Fetches all TraitPurchased events from the TraitShop contract
- * and populates the owned_traits table in Supabase.
- * 
- * Run once: node backfill-owned-traits.js
+ * Uses Etherscan API to fetch all TraitPurchased events (no block range limit)
+ * Run: node backfill-owned-traits.js
  */
 
 require("dotenv").config({ path: ".env.local" });
 const { createClient } = require("@supabase/supabase-js");
-const { createPublicClient, http, parseAbiItem } = require("viem");
-const { mainnet } = require("viem/chains");
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const publicClient = createPublicClient({
-  chain: mainnet,
-  transport: http(process.env.MAINNET_RPC_URL),
-});
-
 const TRAITSHOP_CONTRACT = process.env.NEXT_PUBLIC_TRAITSHOP_CONTRACT;
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
 
-const TRAIT_PURCHASED_EVENT = parseAbiItem(
-  "event TraitPurchased(uint256 indexed tokenId, uint256 indexed traitId, address indexed buyer, uint256 amount)"
-);
+// TraitPurchased event topic
+const TOPIC = "0xedfab007b2dfd6f7b2eb583732ed6240b09f120d749b1ad46ac7f2c7a24ae16b";
 
 async function main() {
-  console.log("Fetching TraitPurchased events from mainnet...\n");
+  console.log("Fetching TraitPurchased events from Etherscan...\n");
 
-  // Get all TraitPurchased logs from contract deployment to now
-  const logs = await publicClient.getLogs({
-    address: TRAITSHOP_CONTRACT,
-    event: TRAIT_PURCHASED_EVENT,
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
+  const url = `https://api.etherscan.io/v2/api?chainid=1&module=logs&action=getLogs&address=${TRAITSHOP_CONTRACT}&topic0=${TOPIC}&fromBlock=25467115&toBlock=latest&apikey=${ETHERSCAN_API_KEY}`;
 
+  const res = await fetch(url);
+  const rawText = await res.text();
+  console.log("Raw response (first 500 chars):", rawText.slice(0, 500));
+  const data = JSON.parse(rawText);
+
+  console.log("Etherscan status:", data.status, "message:", data.message);
+  console.log("Result count:", data.result?.length);
+  if (data.result?.length > 0) {
+    console.log("First log sample:", JSON.stringify(data.result[0], null, 2).slice(0, 500));
+  }
+
+  if (data.status !== "1" && data.result?.length === 0) {
+    console.log("No events found or API error:", data.message);
+    return;
+  }
+
+  const logs = data.result || [];
   console.log(`Found ${logs.length} purchases on-chain\n`);
 
   if (logs.length === 0) {
@@ -46,23 +47,28 @@ async function main() {
     return;
   }
 
-  // Get all traits from Supabase to map on_chain_trait_id → trait UUID
+  // Get all traits from Supabase
   const { data: traits } = await supabase
     .from("traits")
     .select("id, on_chain_trait_id, name, price_eth");
 
-  const traitMap = new Map(
-    (traits || []).map((t) => [t.on_chain_trait_id, t])
-  );
+  const traitMap = new Map((traits || []).map((t) => [t.on_chain_trait_id, t]));
 
-  let inserted = 0;
-  let skipped = 0;
-  let failed = 0;
+  let inserted = 0, skipped = 0, failed = 0;
 
   for (const log of logs) {
-    const { tokenId, traitId, buyer, amount } = log.args;
-    const trait = traitMap.get(Number(traitId));
+    // Decode topics: topic1=tokenId, topic2=traitId, topic3=buyer
+    if (!log.topics || log.topics.length < 4) {
+      console.log(`  ⚠️  Skipping log with missing topics`);
+      skipped++;
+      continue;
+    }
+    const tokenId = parseInt(log.topics[1], 16);
+    const traitId = parseInt(log.topics[2], 16);
+    const buyer = "0x" + log.topics[3].slice(26);
+    const txHash = log.transactionHash;
 
+    const trait = traitMap.get(traitId);
     if (!trait) {
       console.log(`  ⚠️  No trait found for on_chain_trait_id ${traitId}`);
       skipped++;
@@ -72,18 +78,18 @@ async function main() {
     const { error } = await supabase
       .from("owned_traits")
       .upsert({
-        token_id: Number(tokenId),
+        token_id: tokenId,
         trait_id: trait.id,
         owner_wallet: buyer.toLowerCase(),
-        tx_hash: log.transactionHash,
-        purchased_at: new Date().toISOString(),
+        tx_hash: txHash,
+        purchased_at: new Date(parseInt(log.timeStamp, 16) * 1000).toISOString(),
       }, { onConflict: "token_id,trait_id" });
 
     if (error) {
-      console.log(`  ❌ Failed token ${tokenId} trait ${trait.name}: ${error.message}`);
+      console.log(`  ❌ Token ${tokenId} trait ${trait.name}: ${error.message}`);
       failed++;
     } else {
-      console.log(`  ✅ Token #${tokenId} bought ${trait.name} (${trait.price_eth} ETH) by ${buyer.slice(0,6)}...`);
+      console.log(`  ✅ Token #${tokenId} bought ${trait.name} (${trait.price_eth} ETH) by ${buyer.slice(0,8)}...`);
       inserted++;
     }
   }
