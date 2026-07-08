@@ -43,7 +43,9 @@ export async function POST(req: NextRequest) {
       abi: TRAITSHOP_ABI,
       functionName: "withdraw",
       args: [toAddress as `0x${string}`],
-    });
+      chain: mainnet,
+      account,
+    } as any);
 
     await publicClient.waitForTransactionReceipt({ hash });
 
