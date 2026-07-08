@@ -45,11 +45,31 @@ export async function getEquippedTraits(tokenId: number) {
   return data;
 }
 
-export async function equipTrait(tokenId: number, category: string, traitId: string) {
+export async function equipTrait(
+  tokenId: number,
+  category: string,
+  traitId: string,
+  ownerWallet?: string,
+  txHash?: string
+) {
   const { error } = await supabase
     .from("equipped_traits")
     .upsert({ token_id: tokenId, category, trait_id: traitId, updated_at: new Date().toISOString() });
   if (error) throw error;
+
+  // Record purchase in owned_traits for dashboard stats
+  if (ownerWallet && txHash) {
+    await supabase.from("owned_traits").upsert(
+      {
+        token_id: tokenId,
+        trait_id: traitId,
+        owner_wallet: ownerWallet.toLowerCase(),
+        tx_hash: txHash,
+        purchased_at: new Date().toISOString(),
+      },
+      { onConflict: "token_id,trait_id" }
+    );
+  }
 
   // Remove from unequipped_categories if it was previously unequipped
   await supabase

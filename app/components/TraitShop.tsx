@@ -70,7 +70,7 @@ export default function TraitShop({ tokenId, onHoverTrait, onEquipTrait }: Props
       setConfirming(trait.id);
 
       // Optimistically equip right away so user sees the change
-      await equipTrait(tokenId, trait.category, trait.id);
+    await equipTrait(tokenId, trait.category, trait.id, address, hash);  
       onEquipTrait(trait.category, trait.image_url, trait.name);
 
       // Confirm in background — don't block the UI
